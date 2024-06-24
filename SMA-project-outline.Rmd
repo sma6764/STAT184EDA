@@ -1,0 +1,238 @@
+---
+title: "Final Project - Recession & Crimes"
+author: "Suhail M."
+output: html_notebook
+---
+
+## Research Question
+
+The goal of this project is to determine if there is any correlation between a recession and crime rates. In other words, is there more crime during a recession?
+
+In order to do this, I have quarterly GDP data from the St. Louis FED and annual crime statistics from the FBI.
+
+## Data Processing
+
+#### Data Intake
+
+First, I need to load the tidyverse library and two data sets (GDP and CRIME RATEs) into R
+
+```{r warning=FALSE}
+library(tidyverse)
+
+#reading GDP dataset uploaded on github repo
+GDP <- read_csv("https://raw.githubusercontent.com/sma6764/STAT184EDA/main/GDPC1.csv")
+head(GDP)   #printing first 6 rows to check data
+str(GDP) # Display the structure of the dataset
+summary(Total)  # Summary statistics of the dataset
+
+#reading CRIME dataset uploaded on github repo
+CRIME <- read_csv("https://raw.githubusercontent.com/sma6764/STAT184EDA/main/CRIME.csv", show_col_types = FALSE)
+head(CRIME)        #printing first 6 rows to check data
+str(CRIME) # Display the structure of the dataset
+summary(CRIME)  # Summary statistics of the dataset
+```
+
+#### Data Wrangling
+
+In order to find which quarters were in a recession, I will calculate the percentage change for GDP. Then I can filter out all of the positive values to get only recession entries.
+
+```{r warning=FALSE ,echo=TRUE, message=FALSE}
+
+#calculate pecentage change of GDP and only display the values for a negative value to show recession years. 
+
+identify_recessions <- function(data) {
+  # Ensure GDPC1 is numeric (if necessary, though assumed to be from prior exploration)
+  data$GDPC1 <- as.numeric(data$GDPC1)
+  
+  # Calculate percentage change (pChange)
+  data <- data %>%
+    mutate(pChange = (GDPC1 - lag(GDPC1)) / lag(GDPC1) * 100)
+  
+  # Filter for recession periods (negative pChange)
+  data_recessions <- data %>%
+    filter(pChange < 0) %>%
+    na.omit()
+  
+  return(data_recessions)
+}
+
+# Identify recessions using GDP data
+GDP <- identify_recessions(GDP)
+
+# Check for missing values in GDPC1
+sum(is.na(GDP$GDPC1))  # Check if there are any NA values
+
+head(GDP)
+```
+
+Now I will finalize my GDP data. GDP is reported quarterly, but I need to make it annual so that it will match with the Crime table. To make it annual data, I am averaging the percentage change values for each year.
+
+```{r}
+
+#Crime data is only yearly. so need to get the GDP data into yearly. To do this, find the yearly average rate for GDP. Probably better to tell an actual recession because it'll give a closer estimate of consecutive periods and official recessions. 
+
+library(stringi)                                         #Required for stri_extract_last_regex
+
+GDP <- GDP %>%                      #Extracts the year (last four digits) from the date
+  mutate(Year=(stri_extract_last_regex(DATE, "\\d{4}")))
+
+GDP<- GDP %>% group_by(Year ) %>%                       #Finds the average annual percent change in GDP
+  summarize(GDP_Rate= mean(pChange))%>%ungroup()
+
+
+head(GDP)
+
+
+# Plot boxplot if there are no missing values
+if (!anyNA(GDP$GDP_Rate)) {
+  boxplot(GDP$GDP_Rate, main = "Boxplot of Quarterly GDP Growth Rate/Recession Rate")
+} else {
+  cat("There are missing values in GDPC1 column. Please handle them before plotting.")
+}
+```
+
+From box-plot we can see few outliers are there in the recession %, but those can be associated with major economic activities, thus keeping them as it is without truncating to some extreme end values
+
+For CRIME dataset. column names are at 3rd row, only 20 rows are of our use, few NA columns are also there, so need to do pre processing of data before merging with GDP data on years
+
+```{r, fig_height:6, fig.width=10}
+
+col_names <- CRIME[3, ]       #reading 3rd row in crime data as columns name
+
+# Remove the first three rows
+CRIME <- CRIME[-c(1:3),]      #drop first 3 rows as null
+
+# Assign the extracted column names to the data frame
+names(CRIME) <- col_names
+CRIME <- CRIME[1:20,]
+
+CRIME <- CRIME[, colSums(is.na(CRIME)) != nrow(CRIME)]        #drop na columns
+
+CRIME$Year <- gsub("20013", "2001", CRIME$Year)               #corret year typo
+
+CRIME$Year <- gsub("20124", "2012", CRIME$Year)               #correct year typo
+
+# Replace spaces with underscores in column names
+colnames(CRIME) <- gsub("\n", "", colnames(CRIME))
+
+head(CRIME)
+
+print(colnames(CRIME))
+
+CRIME$'Violent crime rate' <- as.numeric(CRIME$'Violent crime rate')     #converting chr datatype to numeric
+
+# Check for outliers in crime rates
+boxplot(CRIME$'Violent crime rate', main = "Boxplot of Violent Crime Rate")
+```
+
+## Data Visualization
+
+Time Series Plot of GDP Growth Rate/Recession Rate
+
+```{r,fig.height=4, fig.width=8}
+
+# Convert Year to numeric
+GDP$Year <- as.numeric(GDP$Year)
+
+# Plot the graph using ggplot2
+ggplot(GDP, aes(x = Year, y = GDP_Rate)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red") +
+  labs(title = "GDP Growth Rate Over Years", x = "Year", y = "GDP Growth Rate/Recession Rate") +
+  theme_minimal()
+```
+
+Violent Crime Rate Over Time
+
+```{r,fig.height=4, fig.width=8}
+CRIME$Year <- as.numeric(CRIME$Year)
+
+colnames(CRIME) <- gsub(" ", "_", colnames(CRIME))
+print(colnames(CRIME))
+
+CRIME$Violent_crime_rate <- as.numeric(CRIME$Violent_crime_rate)
+
+
+# Create the line plot
+ggplot(CRIME, aes(x = Year,y=Violent_crime_rate)) +
+  geom_line() +
+  labs(title = "US Violent Crime Rate",
+       x = "Year",
+       y = "Rate per 100,000 Population")
+
+```
+
+Now I have two tables that are ready to be joined. I will use the year to match them so that each case is a year with crime statistics and a GDP percentage change value
+
+```{r}
+#Need to Join the two tables so each year has a percentage change and crime statistics
+
+# Now perform the full join
+Total <- CRIME %>%                #Join CRIME and GDP by year
+  full_join(GDP, by = "Year") %>%
+  na.omit()
+
+head(Total)             #create neat table for Total
+```
+
+The tables are joined and now I can plot all the data to see if there is any correlation.
+
+```{r fig_height: 9, fig.height=9, fig.width=13}
+
+library(ggpubr)                 #Required for ggarrange()
+
+#Time to plot the data! Is there any correlation between recessions and the amount of crime?
+a <- ggplot(Total, aes(x = GDP_Rate, y = Violentcrime, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Violent Crime")
+
+b <- ggplot(Total, aes(x = GDP_Rate, y = Murder_andnonnegligent_manslaughter, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Murder and Nonviolent Manslaughter")
+  
+c <- ggplot(Total, aes(x = GDP_Rate, y = `Rape(legacydefinition)2`, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Rape")
+
+d <- ggplot(Total, aes(x = GDP_Rate, y = Robbery, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Robbery")
+
+e <- ggplot(Total, aes(x = GDP_Rate, y = Aggravated_assault, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Aggravated Assault")
+
+f <- ggplot(Total, aes(x = GDP_Rate, y = Property_crime, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Property Crime")
+
+g <- ggplot(Total, aes(x = GDP_Rate, y = Burglary, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Burglary")
+  
+h <- ggplot(Total, aes(x = GDP_Rate, y = `Larceny-theft`, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Larceny")
+
+i <- ggplot(Total, aes(x = GDP_Rate, y = Motor_vehicle_theft, color = as.factor(Year))) +
+  geom_point(size = 5) +
+  scale_color_viridis_d() +
+  ggtitle("Motor Vehicle Theft")
+
+ggarrange(a, b, c, d, e, f, g, h, i, common.legend = TRUE, legend = "right")    # Puts all the plots together with a common legend
+
+```
+
+## Conclusion
+
+From the above graphs, there seems to be a relatively linear correlation between recessions and crime. However, it seems as if 2001 is an outlier (except in the Burglary and Motor Vehicle Theft Graphs). Disregarding the 2001 outlier, the data show that there is a positive relationship between recessions and crime.
+
+So, we can conclude that there is positive linear relationship between recession and crime rates, meaning as recession increases, one can see increase in crime rates, irrespective crime types.
